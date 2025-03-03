@@ -223,78 +223,105 @@ async def send_audio_chunks(websocket, audio, chunk_size, chunk_size_seconds):
                 except asyncio.TimeoutError:
                     print("Warning: No response received after sending all chunks")
 
-async def receive_responses(websocket):
+async def receive_responses(websocket, cleanup_mode=False):
     """异步接收服务器响应"""
     global metrics
     
     try:
         while True:
-            # 接收前记录时间
-            before_recv_time = time.time()
-            before_recv_datetime = datetime.fromtimestamp(before_recv_time).strftime('%H:%M:%S.%f')[:-3]
-            print(f"[LOG] 等待接收响应... - 开始时间: {before_recv_datetime}")
-            
-            response = await websocket.recv()
-            
-            # 接收后记录时间
-            received_time = time.time()
-            received_datetime = datetime.fromtimestamp(received_time).strftime('%H:%M:%S.%f')[:-3]
-            
-            response_data = json.loads(response)
-            
-            # 增加响应计数
-            metrics["received_responses"] += 1
-            
-            # 记录第一个响应的时间
-            if metrics["first_response_time"] is None and "type" in response_data and response_data["type"] == "transcription":
-                metrics["first_response_time"] = received_time
-                print(f"[LOG] 首包响应时间: {received_datetime}")
+            try:
+                # 在清理模式下使用较短的超时
+                timeout = 2.0 if cleanup_mode else None
                 
-                # 设置首次响应事件
-                first_response_received.set()
-            
-            # 记录末尾响应的时间
-            # 更新：任何标记为is_final=True的消息或会话结束消息都算作最终响应
-            if "is_final" in response_data and response_data["is_final"] == True:
-                metrics["final_response_time"] = received_time
-                print(f"[LOG] 尾包响应时间: {received_datetime}")
-            elif response_data.get("type") == "session_ended":
-                metrics["final_response_time"] = received_time
-                print(f"[LOG] 会话结束响应时间: {received_datetime}")
-            
-            # 输出响应信息
-            response_type = response_data.get("type", "unknown")
-            is_final = response_data.get("is_final", False)
-            status = response_data.get("status", "")
-            text = response_data.get("text", "")
-            if len(text) > 30:
-                text = text[:30] + "..."
-            
-            # 根据响应类型添加不同的标签
-            if response_type == "transcription":
-                if status == "completed":
-                    status_label = "[已确认]"
-                elif status == "partial":
-                    status_label = "[临时]"
+                # 接收前记录时间
+                before_recv_time = time.time()
+                before_recv_datetime = datetime.fromtimestamp(before_recv_time).strftime('%H:%M:%S.%f')[:-3]
+                print(f"[LOG] {'[清理模式] ' if cleanup_mode else ''}等待接收响应... - 开始时间: {before_recv_datetime}")
+                
+                response = await asyncio.wait_for(websocket.recv(), timeout=timeout)
+                
+                # 接收后记录时间
+                received_time = time.time()
+                received_datetime = datetime.fromtimestamp(received_time).strftime('%H:%M:%S.%f')[:-3]
+                
+                response_data = json.loads(response)
+                
+                # 增加响应计数
+                metrics["received_responses"] += 1
+                
+                # 记录第一个响应的时间
+                if metrics["first_response_time"] is None and "type" in response_data and response_data["type"] == "transcription":
+                    metrics["first_response_time"] = received_time
+                    print(f"[LOG] 首包响应时间: {received_datetime}")
+                    
+                    # 设置首次响应事件
+                    first_response_received.set()
+                
+                # 记录末尾响应的时间
+                # 更新：任何标记为is_final=True的消息或会话结束消息都算作最终响应
+                if "is_final" in response_data and response_data["is_final"] == True:
+                    metrics["final_response_time"] = received_time
+                    print(f"[LOG] 尾包响应时间: {received_datetime}")
+                elif response_data.get("type") == "session_ended":
+                    metrics["final_response_time"] = received_time
+                    print(f"[LOG] 会话结束响应时间: {received_datetime}")
+                
+                # 输出响应信息
+                response_type = response_data.get("type", "unknown")
+                is_final = response_data.get("is_final", False)
+                status = response_data.get("status", "")
+                text = response_data.get("text", "")
+                if len(text) > 30:
+                    text = text[:30] + "..."
+                
+                # 根据响应类型添加不同的标签
+                if response_type == "transcription":
+                    if status == "completed":
+                        status_label = "[已确认]"
+                    elif status == "partial":
+                        status_label = "[临时]"
+                    else:
+                        status_label = ""
+                    print(f"[LOG] {'[清理模式] ' if cleanup_mode else ''}接收到转录 - 时间: {received_datetime}, 状态: {status_label}, 文本: {text}")
+                elif response_type == "full_transcription":
+                    print(f"[LOG] {'[清理模式] ' if cleanup_mode else ''}接收到完整转录 - 时间: {received_datetime}, 文本: {text}")
                 else:
-                    status_label = ""
-                print(f"[LOG] 接收到转录 - 时间: {received_datetime}, 状态: {status_label}, 文本: {text}")
-            elif response_type == "full_transcription":
-                print(f"[LOG] 接收到完整转录 - 时间: {received_datetime}, 文本: {text}")
-            else:
-                print(f"[LOG] 接收到响应 - 时间: {received_datetime}, 类型: {response_type}, 是否最终: {is_final}, 文本: {text}")
-            
-            print(f"Received: {json.dumps(response_data, ensure_ascii=False)}")
+                    print(f"[LOG] {'[清理模式] ' if cleanup_mode else ''}接收到响应 - 时间: {received_datetime}, 类型: {response_type}, 是否最终: {is_final}, 文本: {text}")
+                
+                print(f"Received: {json.dumps(response_data, ensure_ascii=False)}")
+                
+                # 如果在清理模式下处理完最终响应，就退出
+                if cleanup_mode and (is_final or response_type == "session_ended"):
+                    print("[LOG] 处理了最终响应，清理完成")
+                    return
+                
+            except asyncio.TimeoutError:
+                if cleanup_mode:
+                    print("[LOG] 清理超时，没有更多响应")
+                    return
+                else:
+                    # 在正常模式下，超时可能是异常情况
+                    print("[WARNING] 接收超时")
+                    continue
+                    
     except asyncio.CancelledError:
-        # 任务被取消时退出
+        # 任务被取消时，进入清理模式处理可能仍在传输中的消息
         cancel_time = time.time()
         cancel_datetime = datetime.fromtimestamp(cancel_time).strftime('%H:%M:%S.%f')[:-3]
-        print(f"[LOG] 接收任务取消 - 时间: {cancel_datetime}")
+        print(f"[LOG] 接收任务取消 - 时间: {cancel_datetime}，进入清理模式...")
+        
+        # 使用清理模式重新调用自身，处理剩余消息
+        try:
+            await receive_responses(websocket, cleanup_mode=True)
+        except Exception as e:
+            print(f"[ERROR] 清理过程中出错: {e}")
+        
         return
+        
     except Exception as e:
         error_time = time.time()
         error_datetime = datetime.fromtimestamp(error_time).strftime('%H:%M:%S.%f')[:-3]
-        print(f"[LOG] 接收错误 - 时间: {error_datetime}, 错误: {e}")
+        print(f"[LOG] {'[清理模式] ' if cleanup_mode else ''}接收错误 - 时间: {error_datetime}, 错误: {e}")
 
 def print_metrics():
     """打印性能指标"""
