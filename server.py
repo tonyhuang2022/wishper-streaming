@@ -41,9 +41,7 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
         
         clients[session_id] = {
             "processor": processor,
-            "last_activity": time.time(),
-            "stable_text": "",  # 存储稳定的完整文本
-            "unstable_text": ""  # 存储不稳定的临时文本
+            "last_activity": time.time()
         }
     
     # 更新最后活动时间
@@ -54,72 +52,19 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
     processor.insert_audio_chunk(audio_chunk)
     
     try:
-        # 获取稳定的转录结果
         result = processor.process_iter()
-        
-        # 获取不稳定的转录结果（最新内容）
-        unstable_result = None
-        try:
-            # 获取当前不稳定的转录内容
-            the_rest = processor.to_flush(processor.transcript_buffer.complete())
-            if the_rest and the_rest[0] is not None:
-                unstable_result = the_rest
-        except Exception as e:
-            logger.warning(f"Failed to get unstable transcript: {e}")
-        
-        # 处理稳定的转录结果
         if result[0] is not None:
-            # 有新的稳定转录结果
+            # 有转录结果
             beg, end, text = result
-            
-            # 更新稳定文本
-            if text:
-                if clients[session_id]["stable_text"]:
-                    clients[session_id]["stable_text"] += " " + text
-                else:
-                    clients[session_id]["stable_text"] = text
-            
-            # 发送稳定的转录结果
             response = {
                 "type": "transcription",
                 "start": beg,
                 "end": end,
                 "text": text,
-                "is_final": False,
-                "stability": "stable",
-                "full_text": clients[session_id]["stable_text"]
+                "is_final": False
             }
             await websocket.send(json.dumps(response))
-            logger.debug(f"Sent stable transcription: {text}")
-        
-        # 处理不稳定的转录结果
-        if unstable_result and unstable_result[0] is not None:
-            # 有不稳定的转录结果
-            beg_u, end_u, text_u = unstable_result
-            
-            # 更新不稳定文本
-            clients[session_id]["unstable_text"] = text_u
-            
-            # 组合完整文本（稳定+不稳定）
-            combined_text = clients[session_id]["stable_text"]
-            if combined_text and text_u:
-                combined_text += " " + text_u
-            elif text_u:
-                combined_text = text_u
-            
-            # 发送不稳定的转录结果
-            response = {
-                "type": "transcription",
-                "start": beg_u,
-                "end": end_u,
-                "text": text_u,
-                "is_final": False,
-                "stability": "unstable",
-                "full_text": combined_text
-            }
-            await websocket.send(json.dumps(response))
-            logger.debug(f"Sent unstable transcription: {text_u}")
-            
+            logger.debug(f"Sent transcription: {text}")
     except Exception as e:
         logger.error(f"Error processing audio: {e}")
         response = {
@@ -138,28 +83,15 @@ async def finalize_transcription(websocket, session_id):
         
         if result[0] is not None:
             beg, end, text = result
-            
-            # 更新最终稳定文本
-            if text:
-                if clients[session_id]["stable_text"]:
-                    clients[session_id]["stable_text"] += " " + text
-                else:
-                    clients[session_id]["stable_text"] = text
-            
-            # 返回最终的完整转录
-            final_text = clients[session_id]["stable_text"]
-            
             response = {
                 "type": "transcription",
                 "start": beg,
                 "end": end,
                 "text": text,
-                "is_final": True,
-                "stability": "stable",
-                "full_text": final_text
+                "is_final": True
             }
             await websocket.send(json.dumps(response))
-            logger.info(f"Final transcription for session {session_id}: {final_text}")
+            logger.info(f"Final transcription for session {session_id}: {text}")
         
         # 清理会话
         del clients[session_id]
