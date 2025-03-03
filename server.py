@@ -53,18 +53,53 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
     
     try:
         result = processor.process_iter()
-        if result[0] is not None:
-            # 有转录结果
-            beg, end, text = result
+        
+        # 处理新的返回格式
+        completed = result["completed"]
+        the_rest = result["the_rest"]
+        full_text = result["full_text"]
+        
+        # 创建响应
+        response = {
+            "type": "transcription",
+            "is_final": False
+        }
+        
+        # 如果有已确认的文本，添加到响应中
+        if completed and completed[0] is not None:
+            beg, end, text = completed
+            response.update({
+                "start": beg,
+                "end": end,
+                "text": text,
+                "status": "completed"
+            })
+            await websocket.send(json.dumps(response))
+            logger.debug(f"Sent completed transcription: {text}")
+        
+        # 如果有未确认的文本，作为临时结果发送
+        if the_rest and the_rest[0] is not None:
+            beg, end, text = the_rest
             response = {
                 "type": "transcription",
                 "start": beg,
                 "end": end,
                 "text": text,
+                "status": "partial",
                 "is_final": False
             }
             await websocket.send(json.dumps(response))
-            logger.debug(f"Sent transcription: {text}")
+            logger.debug(f"Sent partial transcription: {text}")
+        
+        # 如果有完整文本，作为额外信息发送
+        if full_text:
+            response = {
+                "type": "full_transcription",
+                "text": full_text,
+                "is_final": False
+            }
+            await websocket.send(json.dumps(response))
+            
     except Exception as e:
         logger.error(f"Error processing audio: {e}")
         response = {

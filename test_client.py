@@ -253,14 +253,32 @@ async def receive_responses(websocket):
                 # 设置首次响应事件
                 first_response_received.set()
             
+            # 记录末尾响应的时间（针对已确认的文本）
+            if "type" in response_data and response_data["type"] == "transcription" and response_data.get("status") == "completed":
+                metrics["final_response_time"] = received_time
+            
             # 输出响应信息
             response_type = response_data.get("type", "unknown")
             is_final = response_data.get("is_final", False)
+            status = response_data.get("status", "")
             text = response_data.get("text", "")
             if len(text) > 30:
                 text = text[:30] + "..."
-                
-            print(f"[LOG] 接收到响应 - 时间: {received_datetime}, 类型: {response_type}, 是否最终: {is_final}, 文本: {text}")
+            
+            # 根据响应类型添加不同的标签
+            if response_type == "transcription":
+                if status == "completed":
+                    status_label = "[已确认]"
+                elif status == "partial":
+                    status_label = "[临时]"
+                else:
+                    status_label = ""
+                print(f"[LOG] 接收到转录 - 时间: {received_datetime}, 状态: {status_label}, 文本: {text}")
+            elif response_type == "full_transcription":
+                print(f"[LOG] 接收到完整转录 - 时间: {received_datetime}, 文本: {text}")
+            else:
+                print(f"[LOG] 接收到响应 - 时间: {received_datetime}, 类型: {response_type}, 是否最终: {is_final}, 文本: {text}")
+            
             print(f"Received: {json.dumps(response_data, ensure_ascii=False)}")
     except asyncio.CancelledError:
         # 任务被取消时退出

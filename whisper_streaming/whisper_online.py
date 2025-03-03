@@ -503,8 +503,7 @@ class OnlineASRProcessor:
 
     def process_iter(self):
         """Runs on the current audio buffer.
-        Returns: a tuple (beg_timestamp, end_timestamp, "text"), or (None, None, ""). 
-        The non-emty text is confirmed (committed) partial transcript.
+        Returns: a dictionary with complete and incomplete transcriptions.
         """
 
         prompt, non_prompt = self.prompt()
@@ -539,18 +538,26 @@ class OnlineASRProcessor:
         if len(self.audio_buffer)/self.SAMPLING_RATE > s:
             self.chunk_completed_segment(res)
 
-            # alternative: on any word
-            #l = self.buffer_time_offset + len(self.audio_buffer)/self.SAMPLING_RATE - 10
-            # let's find commited word that is less
-            #k = len(self.commited)-1
-            #while k>0 and self.commited[k][1] > l:
-            #    k -= 1
-            #t = self.commited[k][1] 
             logger.debug("chunking segment")
-            #self.chunk_at(t)
 
         logger.debug(f"len of buffer now: {len(self.audio_buffer)/self.SAMPLING_RATE:2.2f}")
-        return self.to_flush(o)
+        
+        # 返回包含完整信息的字典
+        result = {
+            "completed": completed,
+            "the_rest": the_rest,
+            "full_text": ""
+        }
+        
+        # 如果两者都有内容，组合完整文本
+        if completed and completed[0] is not None:
+            result["full_text"] = completed[2]
+            if the_rest and the_rest[0] is not None:
+                result["full_text"] += " " + the_rest[2]
+        elif the_rest and the_rest[0] is not None:
+            result["full_text"] = the_rest[2]
+        
+        return result
 
     def chunk_completed_sentence(self):
         if self.commited == []: return
