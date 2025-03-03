@@ -29,12 +29,16 @@ def load_config(config_path):
 
 async def process_audio_chunk(websocket, audio_chunk, session_id):
     """处理音频块并返回转录结果"""
-    global clients
+    global clients, asr
     
     # 如果是新会话，创建新的处理器
     if session_id not in clients:
         logger.info(f"Creating new processor for session {session_id}")
-        _, processor = whisper_online.asr_factory(args)
+        
+        # 使用已存在的ASR模型创建处理器
+        from whisper_streaming.whisper_online import create_processor_from_model
+        processor = create_processor_from_model(asr, args)
+        
         clients[session_id] = {
             "processor": processor,
             "last_activity": time.time()

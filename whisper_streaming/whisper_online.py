@@ -991,3 +991,57 @@ if __name__ == "__main__":
 
     o = online.finish()
     output_transcript(o, now=now)
+
+def create_processor_from_model(asr_model, args, logfile=sys.stderr):
+    """
+    从现有模型创建处理器实例，避免重新加载模型
+    
+    参数:
+        asr_model: 已加载的ASR模型实例
+        args: 配置参数
+        logfile: 日志文件，默认为sys.stderr
+        
+    返回:
+        processor: 新的音频处理器
+    """
+    logger.info("Creating processor using existing ASR model")
+    
+    # 创建处理器时复用已有模型
+    if getattr(args, 'vad', False):
+        logger.info("Setting VAD filter for the processor")
+        asr_model.use_vad()
+        
+    language = args.lan
+    if args.task == "translate":
+        asr_model.set_translate_task()
+        tgt_language = "en"  # Whisper translates into English
+    else:
+        tgt_language = language  # Whisper transcribes in this language
+
+    # 创建分词器
+    if args.buffer_trimming == "sentence":
+        from .tokenizer import create_tokenizer
+        tokenizer = create_tokenizer(tgt_language)
+    else:
+        tokenizer = None
+
+    # 创建处理器
+    if args.vac:
+        from .processor import VACOnlineASRProcessor
+        processor = VACOnlineASRProcessor(
+            args.min_chunk_size, 
+            asr_model,
+            tokenizer,
+            logfile=logfile,
+            buffer_trimming=(args.buffer_trimming, args.buffer_trimming_sec)
+        )
+    else:
+        from .processor import OnlineASRProcessor
+        processor = OnlineASRProcessor(
+            asr_model,
+            tokenizer,
+            logfile=logfile,
+            buffer_trimming=(args.buffer_trimming, args.buffer_trimming_sec)
+        )
+        
+    return processor
