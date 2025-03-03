@@ -93,7 +93,7 @@ async def finalize_transcription(websocket, session_id):
         del clients[session_id]
         logger.info(f"Session {session_id} closed and cleaned up")
 
-async def handle_connection(websocket, path):
+async def handle_connection(websocket, path, request_headers=None):
     """处理WebSocket连接"""
     session_id = None
     
