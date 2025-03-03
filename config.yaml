@@ -1,0 +1,27 @@
+backend: "faster-whisper"
+task: "transcribe"
+vad: false
+log_level: "INFO"
+
+
+# Model configuration
+model: "large-v3-turbo"  # Options: tiny, base, small, medium, large
+lan: "auto"          # Language code (e.g., en, fr, de, etc.)
+
+# Performance options
+device: "cuda"           # Options: cpu, cuda
+compute_type: "float32" # Options: float32, float16, int8
+
+# Model paths (optional)
+model_cache_dir: "./models"
+model_dir: "large-v3-turbo"
+
+# Processing configuration
+buffer_trimming: "segment"
+buffer_trimming_sec: 0.3
+vac: false
+min_chunk_size: 0.3
+
+# Generation parameters to control repetition
+repetition_penalty: 1.5  # Values > 1.0 discourage repetition
+no_repeat_ngram_size: 3  # Prevent repetition of n-gram of this size
