@@ -41,7 +41,9 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
         
         clients[session_id] = {
             "processor": processor,
-            "last_activity": time.time()
+            "last_activity": time.time(),
+            "complete_transcript": "",  # 用于存储累积的完整转录
+            "last_end_time": 0  # 存储最后一个已处理片段的结束时间
         }
     
     # 更新最后活动时间
@@ -57,7 +59,6 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
         # 处理新的返回格式
         completed = result["completed"]
         the_rest = result["the_rest"]
-        full_text = result["full_text"]
         
         # 创建响应
         response = {
@@ -65,9 +66,18 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
             "is_final": False
         }
         
-        # 如果有已确认的文本，添加到响应中
+        # 如果有已确认的文本，添加到累积转录中
         if completed and completed[0] is not None:
             beg, end, text = completed
+            
+            # 更新会话的完整转录
+            if beg >= clients[session_id]["last_end_time"]:
+                # 只有当开始时间大于等于上一段的结束时间时才添加
+                # 避免重复添加已转录的内容
+                clients[session_id]["complete_transcript"] += " " + text
+                clients[session_id]["complete_transcript"] = clients[session_id]["complete_transcript"].strip()
+                clients[session_id]["last_end_time"] = end
+            
             response.update({
                 "start": beg,
                 "end": end,
@@ -91,11 +101,20 @@ async def process_audio_chunk(websocket, audio_chunk, session_id):
             await websocket.send(json.dumps(response))
             logger.debug(f"Sent partial transcription: {text}")
         
-        # 如果有完整文本，作为额外信息发送
-        if full_text:
+        # 发送真正的完整累积转录
+        full_text = clients[session_id]["complete_transcript"]
+        
+        # 如果有部分确认的转录，添加到完整文本中以提供最新的输出
+        if the_rest and the_rest[0] is not None:
+            display_text = full_text + " " + the_rest[2]
+            display_text = display_text.strip()
+        else:
+            display_text = full_text
+        
+        if display_text:
             response = {
                 "type": "full_transcription",
-                "text": full_text,
+                "text": display_text,
                 "is_final": False
             }
             await websocket.send(json.dumps(response))
@@ -118,15 +137,32 @@ async def finalize_transcription(websocket, session_id):
         
         if result[0] is not None:
             beg, end, text = result
+            
+            # 添加到累积的完整转录
+            if beg >= clients[session_id]["last_end_time"]:
+                clients[session_id]["complete_transcript"] += " " + text
+                clients[session_id]["complete_transcript"] = clients[session_id]["complete_transcript"].strip()
+            
+            # 发送最终结果
             response = {
                 "type": "transcription",
                 "start": beg,
                 "end": end,
                 "text": text,
-                "is_final": True
+                "is_final": True,
+                "status": "completed"
             }
             await websocket.send(json.dumps(response))
-            logger.info(f"Final transcription for session {session_id}: {text}")
+            
+            # 发送完整的累积转录
+            full_response = {
+                "type": "full_transcription",
+                "text": clients[session_id]["complete_transcript"],
+                "is_final": True
+            }
+            await websocket.send(json.dumps(full_response))
+            
+            logger.info(f"Final transcription for session {session_id}: {clients[session_id]['complete_transcript']}")
         
         # 清理会话
         del clients[session_id]
