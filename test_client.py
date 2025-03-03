@@ -253,9 +253,14 @@ async def receive_responses(websocket):
                 # 设置首次响应事件
                 first_response_received.set()
             
-            # 记录末尾响应的时间（针对已确认的文本）
-            if "type" in response_data and response_data["type"] == "transcription" and response_data.get("status") == "completed":
+            # 记录末尾响应的时间
+            # 更新：任何标记为is_final=True的消息或会话结束消息都算作最终响应
+            if "is_final" in response_data and response_data["is_final"] == True:
                 metrics["final_response_time"] = received_time
+                print(f"[LOG] 尾包响应时间: {received_datetime}")
+            elif response_data.get("type") == "session_ended":
+                metrics["final_response_time"] = received_time
+                print(f"[LOG] 会话结束响应时间: {received_datetime}")
             
             # 输出响应信息
             response_type = response_data.get("type", "unknown")
@@ -291,6 +296,45 @@ async def receive_responses(websocket):
         error_datetime = datetime.fromtimestamp(error_time).strftime('%H:%M:%S.%f')[:-3]
         print(f"[LOG] 接收错误 - 时间: {error_datetime}, 错误: {e}")
 
+def print_metrics():
+    """打印性能指标"""
+    print("\n---- 性能指标 ----")
+    
+    # 首包延迟
+    if metrics["first_chunk_sent_time"] and metrics["first_response_time"]:
+        first_latency = metrics["first_response_time"] - metrics["first_chunk_sent_time"]
+        print(f"首包延迟: {first_latency:.3f} 秒")
+    else:
+        print("首包延迟: 未能计算")
+    
+    # 尾包延迟
+    if metrics["last_chunk_sent_time"] and metrics["final_response_time"]:
+        # 确保尾包时间不早于最后一个块发送时间
+        if metrics["final_response_time"] < metrics["last_chunk_sent_time"]:
+            print(f"警告: 最终响应时间 ({metrics['final_response_time']}) 早于最后一个块发送时间 ({metrics['last_chunk_sent_time']})")
+            print(f"这表明尾包时间记录可能有问题，使用收到的最后一个消息时间替代")
+            # 在这种情况下，使用已记录的最晚响应时间
+            last_response_time = metrics["final_response_time"]
+            final_latency = last_response_time - metrics["last_chunk_sent_time"]
+        else:
+            final_latency = metrics["final_response_time"] - metrics["last_chunk_sent_time"]
+        print(f"尾包延迟: {final_latency:.3f} 秒")
+    else:
+        print("尾包延迟: 未能计算")
+    
+    # 总响应数
+    print(f"总接收响应数: {metrics['received_responses']}")
+    
+    # 首次和末次时间戳（调试用）
+    if metrics["first_chunk_sent_time"]:
+        print(f"首个音频块发送时间: {datetime.fromtimestamp(metrics['first_chunk_sent_time']).strftime('%H:%M:%S.%f')[:-3]}")
+    if metrics["first_response_time"]:
+        print(f"首次响应接收时间: {datetime.fromtimestamp(metrics['first_response_time']).strftime('%H:%M:%S.%f')[:-3]}")
+    if metrics["last_chunk_sent_time"]:
+        print(f"最后音频块发送时间: {datetime.fromtimestamp(metrics['last_chunk_sent_time']).strftime('%H:%M:%S.%f')[:-3]}")
+    if metrics["final_response_time"]:
+        print(f"最终响应接收时间: {datetime.fromtimestamp(metrics['final_response_time']).strftime('%H:%M:%S.%f')[:-3]}")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WebSocket Client for Whisper Streaming")
     parser.add_argument('--server', type=str, default='ws://localhost:8765', help='WebSocket server URI')
@@ -299,4 +343,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    asyncio.run(send_audio_file(args.server, args.audio, args.chunk_size)) 
+    asyncio.run(send_audio_file(args.server, args.audio, args.chunk_size))
+    
+    # 打印性能指标
+    print_metrics() 
