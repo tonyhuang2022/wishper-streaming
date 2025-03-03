@@ -8,6 +8,19 @@ import numpy as np
 import soundfile as sf
 import time
 import os
+from datetime import datetime
+
+# 性能指标记录
+metrics = {
+    "first_chunk_sent_time": None,
+    "first_response_time": None,
+    "last_chunk_sent_time": None,
+    "final_response_time": None,
+    "received_responses": 0,
+}
+
+# 事件标志
+first_response_received = asyncio.Event()
 
 async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
     """
@@ -18,6 +31,8 @@ async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
         audio_path: 音频文件路径
         chunk_size_seconds: 每个块的大小（秒）
     """
+    global metrics
+    
     # 输出版本信息
     import websockets
     print(f"Using websockets version: {websockets.__version__}")
@@ -28,6 +43,7 @@ async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
         return
     
     print(f"Loading audio file: {audio_path}")
+    test_start_time = time.time()
     
     try:
         # 加载音频文件
@@ -57,6 +73,10 @@ async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
         chunk_size = int(chunk_size_seconds * sample_rate)
         print(f"Chunk size: {chunk_size} samples ({chunk_size_seconds} seconds)")
         
+        # 计算音频总时长（秒）
+        audio_duration = len(audio) / sample_rate
+        print(f"Audio duration: {audio_duration:.2f} seconds")
+        
         try:
             print(f"Connecting to {uri}...")
             async with websockets.connect(uri, ping_interval=20, ping_timeout=20, close_timeout=10) as websocket:
@@ -78,6 +98,9 @@ async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
                 except asyncio.TimeoutError:
                     print("Error: Session start timeout")
                     return
+                
+                # 重置事件标志
+                first_response_received.clear()
                 
                 # 创建发送和接收任务
                 send_task = asyncio.create_task(send_audio_chunks(websocket, audio, chunk_size, chunk_size_seconds))
@@ -102,12 +125,37 @@ async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
                 # 接收最终响应
                 try:
                     # 接收最终结果和会话结束消息
-                    for _ in range(2):
+                    for i in range(2):
                         response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                         response_data = json.loads(response)
                         print(f"Final response: {json.dumps(response_data, ensure_ascii=False)}")
+                        
+                        # 记录最终响应时间（第一个final response）
+                        if i == 0 and metrics["final_response_time"] is None:
+                            metrics["final_response_time"] = time.time()
                 except asyncio.TimeoutError:
                     print("Warning: Final response timeout")
+                
+                # 输出性能指标
+                print("\n===== 性能指标 =====")
+                test_end_time = time.time()
+                print(f"测试总时长: {test_end_time - test_start_time:.2f} 秒")
+                print(f"音频总时长: {audio_duration:.2f} 秒")
+                
+                if metrics["first_chunk_sent_time"] and metrics["first_response_time"]:
+                    first_latency = metrics["first_response_time"] - metrics["first_chunk_sent_time"]
+                    print(f"首包延迟 (第一个音频块发送完成到收到第一个响应): {first_latency:.2f} 秒")
+                
+                if metrics["last_chunk_sent_time"] and metrics["final_response_time"]:
+                    final_latency = metrics["final_response_time"] - metrics["last_chunk_sent_time"]
+                    print(f"尾包延迟 (最后一个音频块发送完成到收到最终结果): {final_latency:.2f} 秒")
+                
+                if audio_duration > 0 and metrics["final_response_time"] and test_start_time:
+                    overall_rtf = (metrics["final_response_time"] - test_start_time) / audio_duration
+                    print(f"总体实时率 (RTF): {overall_rtf:.2f}x")
+                
+                print(f"收到的响应总数: {metrics['received_responses']}")
+                print("===================")
                 
         except (websockets.exceptions.ConnectionClosedError,
                 ConnectionRefusedError) as e:
@@ -125,6 +173,8 @@ async def send_audio_file(uri, audio_path, chunk_size_seconds=0.3):
 
 async def send_audio_chunks(websocket, audio, chunk_size, chunk_size_seconds):
     """异步发送音频块"""
+    global metrics
+    
     total_chunks = (len(audio) + chunk_size - 1) // chunk_size
     
     start_time = time.time()
@@ -152,14 +202,48 @@ async def send_audio_chunks(websocket, audio, chunk_size, chunk_size_seconds):
             "command": "process_audio",
             "audio": chunk_base64
         })
+        sent_time = time.time()
         await websocket.send(message)
+        
+        # 记录第一个块发送的时间
+        if chunk_num == 1 and metrics["first_chunk_sent_time"] is None:
+            metrics["first_chunk_sent_time"] = sent_time
+            print(f"First chunk sent at: {datetime.fromtimestamp(sent_time).strftime('%H:%M:%S.%f')[:-3]}")
+        
+        # 记录最后一个块发送的时间
+        if chunk_num == total_chunks:
+            metrics["last_chunk_sent_time"] = sent_time
+            print(f"Last chunk sent at: {datetime.fromtimestamp(sent_time).strftime('%H:%M:%S.%f')[:-3]}")
+            
+            # 等待首包响应，以计算首包时延
+            if not first_response_received.is_set():
+                try:
+                    # 最多等待5秒
+                    await asyncio.wait_for(first_response_received.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    print("Warning: No response received after sending all chunks")
 
 async def receive_responses(websocket):
     """异步接收服务器响应"""
+    global metrics
+    
     try:
         while True:
             response = await websocket.recv()
             response_data = json.loads(response)
+            
+            # 增加响应计数
+            metrics["received_responses"] += 1
+            
+            # 记录第一个响应的时间
+            if metrics["first_response_time"] is None and "type" in response_data and response_data["type"] == "transcription":
+                received_time = time.time()
+                metrics["first_response_time"] = received_time
+                print(f"First response received at: {datetime.fromtimestamp(received_time).strftime('%H:%M:%S.%f')[:-3]}")
+                
+                # 设置首次响应事件
+                first_response_received.set()
+            
             print(f"Received: {json.dumps(response_data, ensure_ascii=False)}")
     except asyncio.CancelledError:
         # 任务被取消时退出
