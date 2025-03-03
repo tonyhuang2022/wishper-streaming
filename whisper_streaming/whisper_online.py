@@ -1020,14 +1020,13 @@ def create_processor_from_model(asr_model, args, logfile=sys.stderr):
 
     # 创建分词器
     if args.buffer_trimming == "sentence":
-        from .tokenizer import create_tokenizer
         tokenizer = create_tokenizer(tgt_language)
     else:
         tokenizer = None
 
-    # 创建处理器
+    # 创建处理器 - 直接使用当前文件中定义的类
     if args.vac:
-        from .processor import VACOnlineASRProcessor
+        # 使用相同的类创建方式，不使用导入
         processor = VACOnlineASRProcessor(
             args.min_chunk_size, 
             asr_model,
@@ -1036,7 +1035,7 @@ def create_processor_from_model(asr_model, args, logfile=sys.stderr):
             buffer_trimming=(args.buffer_trimming, args.buffer_trimming_sec)
         )
     else:
-        from .processor import OnlineASRProcessor
+        # 使用相同的类创建方式，不使用导入
         processor = OnlineASRProcessor(
             asr_model,
             tokenizer,
