@@ -637,7 +637,12 @@ class OnlineASRProcessor:
     def finish(self):
         """完成处理，返回任何剩余的转录"""
         if len(self.audio_buffer) == 0:
-            return None, None, None
+            # 如果没有音频，返回匹配 process_iter 格式的空结果
+            return {
+                "completed": (None, None, None),
+                "the_rest": (None, None, None),
+                "full_text": ""
+            }
         
         # 进行最终转录
         prompt, non_prompt = self.prompt()
@@ -645,11 +650,17 @@ class OnlineASRProcessor:
         tsw = self.asr.ts_words(res)
         
         self.transcript_buffer.insert(tsw, self.buffer_time_offset)
-        self.transcript_buffer.finish()
+        
+        # 获取已确认的部分
         o = self.transcript_buffer.flush()
         self.commited.extend(o)
         completed = self.to_flush(o)
+        
+        # 获取未确认的部分 (使用 complete 而不是 finish，因为 HypothesisBuffer 没有 finish 方法)
         the_rest = self.to_flush(self.transcript_buffer.complete())
+        
+        # 更新缓冲区时间偏移量 (保留原始功能)
+        self.buffer_time_offset += len(self.audio_buffer)/16000
         
         # 返回包含完整信息的字典，与 process_iter 格式一致
         result = {
