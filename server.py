@@ -93,7 +93,7 @@ async def finalize_transcription(websocket, session_id):
         del clients[session_id]
         logger.info(f"Session {session_id} closed and cleaned up")
 
-async def handle_connection(websocket, path, request_headers=None):
+async def handle_connection(websocket, path=None):
     """处理WebSocket连接"""
     session_id = None
     
@@ -201,6 +201,10 @@ async def start_server():
     # 设置日志级别
     if hasattr(args, 'log_level'):
         logger.setLevel(getattr(logging, args.log_level))
+    
+    # 输出websockets版本信息
+    import websockets
+    logger.info(f"Using websockets version: {websockets.__version__}")
     
     # 加载配置
     if os.path.exists(args.config):
