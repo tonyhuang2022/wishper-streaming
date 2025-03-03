@@ -133,40 +133,82 @@ async def finalize_transcription(websocket, session_id):
     
     if session_id in clients:
         processor = clients[session_id]["processor"]
-        result = processor.finish()
-        
-        if result[0] is not None:
-            beg, end, text = result
+        try:
+            # 处理剩余音频
+            result = processor.finish()
             
-            # 添加到累积的完整转录
-            if beg >= clients[session_id]["last_end_time"]:
-                clients[session_id]["complete_transcript"] += " " + text
-                clients[session_id]["complete_transcript"] = clients[session_id]["complete_transcript"].strip()
+            # 提取最后一部分转录（如果有）
+            if isinstance(result, dict):
+                # 如果 finish() 返回字典（与 process_iter 相同的格式）
+                completed = result.get("completed")
+                if completed and completed[0] is not None:
+                    beg, end, text = completed
+                    # 添加到累积转录
+                    if beg >= clients[session_id]["last_end_time"]:
+                        clients[session_id]["complete_transcript"] += " " + text
+                        clients[session_id]["complete_transcript"] = clients[session_id]["complete_transcript"].strip()
+                    
+                    # 发送最终片段
+                    response = {
+                        "type": "transcription",
+                        "start": beg,
+                        "end": end,
+                        "text": text,
+                        "is_final": True,
+                        "status": "completed"
+                    }
+                    await websocket.send(json.dumps(response))
+            elif result[0] is not None:
+                # 如果 finish() 返回元组 (beg, end, text)
+                beg, end, text = result
+                
+                # 添加到累积转录
+                if beg >= clients[session_id]["last_end_time"]:
+                    clients[session_id]["complete_transcript"] += " " + text
+                    clients[session_id]["complete_transcript"] = clients[session_id]["complete_transcript"].strip()
+                
+                # 发送最终片段
+                response = {
+                    "type": "transcription",
+                    "start": beg,
+                    "end": end,
+                    "text": text,
+                    "is_final": True,
+                    "status": "completed"
+                }
+                await websocket.send(json.dumps(response))
             
-            # 发送最终结果
-            response = {
-                "type": "transcription",
-                "start": beg,
-                "end": end,
-                "text": text,
-                "is_final": True,
-                "status": "completed"
-            }
-            await websocket.send(json.dumps(response))
-            
-            # 发送完整的累积转录
+            # 确保完整转录不为空
+            complete_transcript = clients[session_id]["complete_transcript"]
+            if not complete_transcript.strip():
+                logger.warning(f"Final transcript is empty for session {session_id}")
+                
+            # 无论如何都发送完整的累积转录
             full_response = {
                 "type": "full_transcription",
-                "text": clients[session_id]["complete_transcript"],
+                "text": complete_transcript,
                 "is_final": True
             }
             await websocket.send(json.dumps(full_response))
             
-            logger.info(f"Final transcription for session {session_id}: {clients[session_id]['complete_transcript']}")
+            logger.info(f"Final transcription for session {session_id}: {complete_transcript}")
+            
+        except Exception as e:
+            logger.error(f"Error finalizing transcription: {e}")
+            # 即使处理失败，仍尝试发送已累积的转录
+            if "complete_transcript" in clients[session_id]:
+                full_response = {
+                    "type": "full_transcription",
+                    "text": clients[session_id]["complete_transcript"],
+                    "is_final": True,
+                    "error": str(e)
+                }
+                await websocket.send(json.dumps(full_response))
         
-        # 清理会话
-        del clients[session_id]
-        logger.info(f"Session {session_id} closed and cleaned up")
+        finally:
+            # 清理会话
+            del clients[session_id]
+            logger.info(f"Session {session_id} closed and cleaned up")
 
 async def handle_connection(websocket, path=None):
     """处理WebSocket连接"""

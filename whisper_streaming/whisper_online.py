@@ -635,14 +635,37 @@ class OnlineASRProcessor:
         return out
 
     def finish(self):
-        """Flush the incomplete text when the whole processing ends.
-        Returns: the same format as self.process_iter()
-        """
-        o = self.transcript_buffer.complete()
-        f = self.to_flush(o)
-        logger.debug(f"last, noncommited: {f}")
-        self.buffer_time_offset += len(self.audio_buffer)/16000
-        return f
+        """完成处理，返回任何剩余的转录"""
+        if len(self.audio_buffer) == 0:
+            return None, None, None
+        
+        # 进行最终转录
+        prompt, non_prompt = self.prompt()
+        res = self.asr.transcribe(self.audio_buffer, init_prompt=prompt)
+        tsw = self.asr.ts_words(res)
+        
+        self.transcript_buffer.insert(tsw, self.buffer_time_offset)
+        self.transcript_buffer.finish()
+        o = self.transcript_buffer.flush()
+        self.commited.extend(o)
+        completed = self.to_flush(o)
+        the_rest = self.to_flush(self.transcript_buffer.complete())
+        
+        # 返回包含完整信息的字典，与 process_iter 格式一致
+        result = {
+            "completed": completed,
+            "the_rest": the_rest,
+            "full_text": ""
+        }
+        
+        if completed and completed[0] is not None:
+            result["full_text"] = completed[2]
+            if the_rest and the_rest[0] is not None:
+                result["full_text"] += " " + the_rest[2]
+        elif the_rest and the_rest[0] is not None:
+            result["full_text"] = the_rest[2]
+        
+        return result
 
 
     def to_flush(self, sents, sep=None, offset=0, ):
