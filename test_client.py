@@ -229,7 +229,17 @@ async def receive_responses(websocket):
     
     try:
         while True:
+            # 接收前记录时间
+            before_recv_time = time.time()
+            before_recv_datetime = datetime.fromtimestamp(before_recv_time).strftime('%H:%M:%S.%f')[:-3]
+            print(f"[LOG] 等待接收响应... - 开始时间: {before_recv_datetime}")
+            
             response = await websocket.recv()
+            
+            # 接收后记录时间
+            received_time = time.time()
+            received_datetime = datetime.fromtimestamp(received_time).strftime('%H:%M:%S.%f')[:-3]
+            
             response_data = json.loads(response)
             
             # 增加响应计数
@@ -237,19 +247,31 @@ async def receive_responses(websocket):
             
             # 记录第一个响应的时间
             if metrics["first_response_time"] is None and "type" in response_data and response_data["type"] == "transcription":
-                received_time = time.time()
                 metrics["first_response_time"] = received_time
-                print(f"First response received at: {datetime.fromtimestamp(received_time).strftime('%H:%M:%S.%f')[:-3]}")
+                print(f"[LOG] 首包响应时间: {received_datetime}")
                 
                 # 设置首次响应事件
                 first_response_received.set()
             
+            # 输出响应信息
+            response_type = response_data.get("type", "unknown")
+            is_final = response_data.get("is_final", False)
+            text = response_data.get("text", "")
+            if len(text) > 30:
+                text = text[:30] + "..."
+                
+            print(f"[LOG] 接收到响应 - 时间: {received_datetime}, 类型: {response_type}, 是否最终: {is_final}, 文本: {text}")
             print(f"Received: {json.dumps(response_data, ensure_ascii=False)}")
     except asyncio.CancelledError:
         # 任务被取消时退出
+        cancel_time = time.time()
+        cancel_datetime = datetime.fromtimestamp(cancel_time).strftime('%H:%M:%S.%f')[:-3]
+        print(f"[LOG] 接收任务取消 - 时间: {cancel_datetime}")
         return
     except Exception as e:
-        print(f"Error receiving response: {e}")
+        error_time = time.time()
+        error_datetime = datetime.fromtimestamp(error_time).strftime('%H:%M:%S.%f')[:-3]
+        print(f"[LOG] 接收错误 - 时间: {error_datetime}, 错误: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WebSocket Client for Whisper Streaming")
